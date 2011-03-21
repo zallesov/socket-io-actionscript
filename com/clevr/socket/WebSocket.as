@@ -11,23 +11,25 @@
 
 package com.clevr.socket {
 
+import com.adobe.net.proxies.RFC2817Socket;
+import com.gimite.WebSocketStateEvent;
+import com.gsolo.encryption.MD5;
+import com.hurlant.crypto.tls.TLSConfig;
+import com.hurlant.crypto.tls.TLSEngine;
+import com.hurlant.crypto.tls.TLSSecurityParameters;
+import com.hurlant.crypto.tls.TLSSocket;
+
 import flash.display.*;
 import flash.events.*;
 import flash.external.*;
 import flash.net.*;
 import flash.system.*;
 import flash.utils.*;
-import mx.core.*;
+
 import mx.controls.*;
+import mx.core.*;
 import mx.events.*;
 import mx.utils.*;
-import com.adobe.net.proxies.RFC2817Socket;
-import com.hurlant.crypto.tls.TLSSocket;
-import com.hurlant.crypto.tls.TLSConfig;
-import com.hurlant.crypto.tls.TLSEngine;
-import com.hurlant.crypto.tls.TLSSecurityParameters;
-import com.gsolo.encryption.MD5;
-import com.gimite.WebSocketStateEvent;
 
 [Event(name="message", type="flash.events.Event")]
 [Event(name="open", type="flash.events.Event")]
@@ -58,13 +60,14 @@ public class WebSocket extends EventDispatcher {
   private var readyState:int = CONNECTING;
   private var bufferedAmount:int = 0;
   private var headers:String;
+  private var cookies:String;
   private var noiseChars:Array;
   private var expectedDigest:String;
 
   public function WebSocket(
       url:String, protocol:String,
       proxyHost:String = null, proxyPort:int = 0,
-      headers:String = null) {
+      cookies:String="", headers:String = "") {
     initNoiseChars();
     this.url = url;
     var m:Array = url.match(/^(\w+):\/\/([^\/:]+)(:(\d+))?(\/.*)?$/);
@@ -79,6 +82,7 @@ public class WebSocket extends EventDispatcher {
     // headers should be zero or more complete lines, for example
     // "Header1: xxx\r\nHeader2: yyyy\r\n"
     this.headers = headers;
+	this.cookies = cookies;
     
     if (proxyHost != null && proxyPort != 0){
       if (scheme == "wss") {
@@ -108,7 +112,13 @@ public class WebSocket extends EventDispatcher {
     rawSocket.addEventListener(Event.CONNECT, onSocketConnect);
     rawSocket.addEventListener(IOErrorEvent.IO_ERROR, onSocketIoError);
     rawSocket.addEventListener(SecurityErrorEvent.SECURITY_ERROR, onSocketSecurityError);
-    rawSocket.connect(host, port);
+    
+  }
+  
+  public function connect():void{
+	  if(rawSocket.connected) return;
+	  headerState = 0;
+	  rawSocket.connect(host, port);
   }
   
   public function send(encData:String):int {
@@ -159,13 +169,12 @@ public class WebSocket extends EventDispatcher {
   
   private function onSocketConnect(event:Event):void {
     if (scheme == "wss") {
-      trace("starting SSL/TLS");
+      trace("# WebSocket starting SSL/TLS");
       tlsSocket.startTLS(rawSocket, host, tlsConfig);
     }
-    
+	trace("# WebSocket connected");
     dataQueue = [];
     var hostValue:String = host + (port == 80 ? "" : ":" + port);
-    var cookie:String = "";
     var key1:String = generateKey();
     var key2:String = generateKey();
     var key3:String = generateKey3();
@@ -186,21 +195,23 @@ public class WebSocket extends EventDispatcher {
       "Sec-WebSocket-Key2: {5}\r\n" +
       "{6}" +
       "\r\n",
-      path, hostValue, origin, cookie, key1, key2, opt);
-    trace("request header:\n" + req);
+      path, hostValue, origin, cookies, key1, key2, opt);
+    //trace("# WebSocket request header:\n" + req);
     socket.writeUTFBytes(req);
-    trace("sent key3: " + key3);
+    //trace("# WebSocket sent key3: " + key3);
     writeBytes(key3);
     socket.flush();
   }
 
   private function onSocketClose(event:Event):void {
+	trace("# WebSocket closed");
     readyState = CLOSED;
     notifyStateChange();
     dispatchEvent(new Event("close"));
   }
 
   private function onSocketIoError(event:IOErrorEvent):void {
+	trace("# WebSocket IOError: "+event.text);
     var message:String;
     if (readyState == CONNECTING) {
       message = "cannot connect to Web Socket server at " + url + " (IoError)";
@@ -211,6 +222,7 @@ public class WebSocket extends EventDispatcher {
   }
 
   private function onSocketSecurityError(event:SecurityErrorEvent):void {
+	  trace("# WebSocket SecurityError: "+event.text);
     var message:String;
     if (readyState == CONNECTING) {
       message =
@@ -227,11 +239,13 @@ public class WebSocket extends EventDispatcher {
   }
   
   private function onError(message:String):void {
-    var state:int = readyState;
+	trace("# WebSocket ERROR: "+message);
+	var state:int = readyState;
+	dispatchEvent(new Event(state == CONNECTING ? "close" : "error"));
     if (state == CLOSED) return;
     close();
     notifyStateChange();
-    dispatchEvent(new Event(state == CONNECTING ? "close" : "error"));
+    
   }
 
   private function onSocketData(event:ProgressEvent):void {
@@ -249,7 +263,7 @@ public class WebSocket extends EventDispatcher {
         }
         if (headerState == 4) {
           var headerStr:String = readUTFBytes(buffer, 0, pos + 1);
-          trace("response header:\n" + headerStr);
+          trace("# WebSocket response header:\n" + headerStr);
           if (!validateHeader(headerStr)) return;
           removeBufferBefore(pos + 1);
           pos = -1;
@@ -257,7 +271,7 @@ public class WebSocket extends EventDispatcher {
       } else if (headerState == 4) {
         if (pos == 15) {
           var replyDigest:String = readBytes(buffer, 0, 16);
-          trace("reply digest: " + replyDigest);
+          trace("# WebSocket reply digest: " + replyDigest);
           if (replyDigest != expectedDigest) {
             onError("digest doesn't match: " + replyDigest + " != " + expectedDigest);
             return;
@@ -272,7 +286,7 @@ public class WebSocket extends EventDispatcher {
       } else {
         if (buffer[pos] == 0xff && pos > 0) {
           if (buffer[0] != 0x00) {
-            onError("data must start with \\x00");
+            onError("data must start with \\x00 ");
             return;
           }
           var data:String = readUTFBytes(buffer, 1, pos - 1);
@@ -281,7 +295,7 @@ public class WebSocket extends EventDispatcher {
           removeBufferBefore(pos + 1);
           pos = -1;
         } else if (pos == 1 && buffer[0] == 0xff && buffer[1] == 0x00) { // closing
-          trace("received closing packet");
+          trace("# WebSocket received closing packet");
           removeBufferBefore(pos + 1);
           pos = -1;
           close();
@@ -464,7 +478,6 @@ public class WebSocket extends EventDispatcher {
     for (var i:int = 0; i < bytes.length; ++i) {
       output += bytes.charCodeAt(i).toString() + ", ";
     }
-    trace(output);
   }
   
 }
