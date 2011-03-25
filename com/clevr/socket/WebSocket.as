@@ -196,9 +196,9 @@ public class WebSocket extends EventDispatcher {
       "{6}" +
       "\r\n",
       path, hostValue, origin, cookies, key1, key2, opt);
-    //trace("# WebSocket request header:\n" + req);
+    trace("# WebSocket request header:\n" + req);
     socket.writeUTFBytes(req);
-    //trace("# WebSocket sent key3: " + key3);
+    trace("# WebSocket sent key3: " + key3);
     writeBytes(key3);
     socket.flush();
   }
@@ -251,6 +251,8 @@ public class WebSocket extends EventDispatcher {
   private function onSocketData(event:ProgressEvent):void {
     var pos:int = buffer.length;
     socket.readBytes(buffer, pos);
+	
+	
     for (; pos < buffer.length; ++pos) {
       if (headerState < 4) {
         // try to find "\r\n\r\n"

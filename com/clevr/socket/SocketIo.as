@@ -86,7 +86,7 @@ package com.clevr.socket
 		
 		public function send(message:*):void {
 			var encodedMessage:String = encode(message);
-			trace("# SocketIO sending message: "+message);
+			trace("# SocketIO sending message: "+encodedMessage);
 			write(encodedMessage);
 		}
 		
@@ -108,6 +108,14 @@ package com.clevr.socket
 			return ret;
 		}
 		
+		protected function onData(event:Event):void {
+			resetConnectTimeOut();
+			var bunch:Array = socket.readSocketData();
+			for (var i:int = 0; i < bunch.length; i++) {
+				var msgs = decode(bunch[i]);
+			}
+		}
+		
 		protected function decode(data:String):void {
 			var messages:Array = [], number, n;
 			do {
@@ -127,14 +135,6 @@ package com.clevr.socket
 				onMessage(data.substr(0, number));
 				data = data.substr(number);
 			} while(data !== '');
-		}
-		
-		protected function onData(event:Event):void {
-			resetConnectTimeOut();
-			var bunch:Array = socket.readSocketData();
-			for (var i:int = 0; i < bunch.length; i++) {
-				var msgs = decode(bunch[i]);
-			}
 		}
 		
 		protected function onMessage(message:String):void{
