@@ -1,9 +1,0 @@
-com/hurlant
-*.swf
-*.tmproj
-/libs
-/.actionScriptProperties
-/.flexLibProperties
-/.gitignore
-/.project
-/Example.mxml
