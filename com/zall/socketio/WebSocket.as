@@ -1,23 +1,13 @@
 /**
- * Based on Web Socket implementation in web-socket-js by Hiroshi Ichikawa 
- * from https://github.com/gimite/web-socket-js
+ * forked from https://github.com/gimite/web-socket-js
  * Modified by Matt Kane to run outside the context of flash-js bridge swf
+ * Modified by Alexander Zalesov to run with AS Soket.IO,
+ * Riped out all unused protocols as the weight to much and not needed.
  **/
 
-// Copyright: Hiroshi Ichikawa <http://gimite.net/en/>
-// License: New BSD License
-// Reference: http://dev.w3.org/html5/websockets/
-// Reference: http://tools.ietf.org/html/draft-hixie-thewebsocketprotocol-76
+package com.zall.socketio {
 
-package com.clevr.socket {
-
-import com.adobe.net.proxies.RFC2817Socket;
-import com.gimite.WebSocketStateEvent;
 import com.gsolo.encryption.MD5;
-import com.hurlant.crypto.tls.TLSConfig;
-import com.hurlant.crypto.tls.TLSEngine;
-import com.hurlant.crypto.tls.TLSSecurityParameters;
-import com.hurlant.crypto.tls.TLSSocket;
 
 import flash.display.*;
 import flash.events.*;
@@ -35,19 +25,15 @@ import mx.utils.*;
 [Event(name="open", type="flash.events.Event")]
 [Event(name="close", type="flash.events.Event")]
 [Event(name="error", type="flash.events.Event")]
-[Event(name="stateChange", type="WebSocketStateEvent")]
-public class WebSocket extends EventDispatcher {
+public class WebSocket extends EventDispatcher implements ISocketStreamer{
   
   private static var CONNECTING:int = 0;
   private static var OPEN:int = 1;
   private static var CLOSING:int = 2;
   private static var CLOSED:int = 3;
   
-  private var rawSocket:Socket;
-  private var tlsSocket:TLSSocket;
-  private var tlsConfig:TLSConfig;
   private var socket:Socket;
-  private var url:String;
+  private var _url:String;
   private var scheme:String;
   private var host:String;
   private var port:uint;
@@ -63,13 +49,14 @@ public class WebSocket extends EventDispatcher {
   private var cookies:String;
   private var noiseChars:Array;
   private var expectedDigest:String;
+  private var sessionId:String;
 
   public function WebSocket(
       url:String, protocol:String,
       proxyHost:String = null, proxyPort:int = 0,
       cookies:String="", headers:String = "") {
     initNoiseChars();
-    this.url = url;
+    this._url = url;
     var m:Array = url.match(/^(\w+):\/\/([^\/:]+)(:(\d+))?(\/.*)?$/);
     if (!m) onFatal("SYNTAX_ERR: invalid url: " + url);
     this.scheme = m[1];
@@ -84,41 +71,24 @@ public class WebSocket extends EventDispatcher {
     this.headers = headers;
 	this.cookies = cookies;
     
-    if (proxyHost != null && proxyPort != 0){
-      if (scheme == "wss") {
-        onFatal("wss with proxy is not supported");
-      }
-      var proxySocket:RFC2817Socket = new RFC2817Socket();
-      proxySocket.setProxyInfo(proxyHost, proxyPort);
-      proxySocket.addEventListener(ProgressEvent.SOCKET_DATA, onSocketData);
-      rawSocket = socket = proxySocket;
-    } else {
-      rawSocket = new Socket();
-      if (scheme == "wss") {
-        tlsConfig= new TLSConfig(TLSEngine.CLIENT,
-            null, null, null, null, null,
-            TLSSecurityParameters.PROTOCOL_VERSION);
-        tlsConfig.trustAllCertificates = true;
-        tlsConfig.ignoreCommonNameMismatch = true;
-        tlsSocket = new TLSSocket();
-        tlsSocket.addEventListener(ProgressEvent.SOCKET_DATA, onSocketData);
-        socket = tlsSocket;
-      } else {
-        rawSocket.addEventListener(ProgressEvent.SOCKET_DATA, onSocketData);
-        socket = rawSocket;
-      }
-    }
-    rawSocket.addEventListener(Event.CLOSE, onSocketClose);
-    rawSocket.addEventListener(Event.CONNECT, onSocketConnect);
-    rawSocket.addEventListener(IOErrorEvent.IO_ERROR, onSocketIoError);
-    rawSocket.addEventListener(SecurityErrorEvent.SECURITY_ERROR, onSocketSecurityError);
+	socket = new Socket();
+	socket.addEventListener(ProgressEvent.SOCKET_DATA, onSocketData);
+	
+	socket.addEventListener(Event.CLOSE, onSocketClose);
+	socket.addEventListener(Event.CONNECT, onSocketConnect);
+	socket.addEventListener(IOErrorEvent.IO_ERROR, onSocketIoError);
+	socket.addEventListener(SecurityErrorEvent.SECURITY_ERROR, onSocketSecurityError);
     
   }
   
+  public function get url():String{
+	  return _url;
+  }
+  
   public function connect():void{
-	  if(rawSocket.connected) return;
+	  if(socket.connected) return;
 	  headerState = 0;
-	  rawSocket.connect(host, port);
+	  socket.connect(host, port);
   }
   
   public function send(encData:String):int {
@@ -167,11 +137,11 @@ public class WebSocket extends EventDispatcher {
     return bufferedAmount;
   }
   
+  public function setSession(sessionId:String):void{
+	  this.sessionId = sessionId;
+  }
+  
   private function onSocketConnect(event:Event):void {
-    if (scheme == "wss") {
-      trace("# WebSocket starting SSL/TLS");
-      tlsSocket.startTLS(rawSocket, host, tlsConfig);
-    }
 	trace("# WebSocket connected");
     dataQueue = [];
     var hostValue:String = host + (port == 80 ? "" : ":" + port);
@@ -206,7 +176,6 @@ public class WebSocket extends EventDispatcher {
   private function onSocketClose(event:Event):void {
 	trace("# WebSocket closed");
     readyState = CLOSED;
-    notifyStateChange();
     dispatchEvent(new Event("close"));
   }
 
@@ -214,9 +183,9 @@ public class WebSocket extends EventDispatcher {
 	trace("# WebSocket IOError: "+event.text);
     var message:String;
     if (readyState == CONNECTING) {
-      message = "cannot connect to Web Socket server at " + url + " (IoError)";
+      message = "cannot connect to Web Socket server at " + _url + " (IoError)";
     } else {
-      message = "error communicating with Web Socket server at " + url + " (IoError)";
+      message = "error communicating with Web Socket server at " + _url + " (IoError)";
     }
     onError(message);
   }
@@ -226,10 +195,10 @@ public class WebSocket extends EventDispatcher {
     var message:String;
     if (readyState == CONNECTING) {
       message =
-          "cannot connect to Web Socket server at " + url + " (SecurityError)\n" +
+          "cannot connect to Web Socket server at " + _url + " (SecurityError)\n" +
           "make sure the server is running and Flash socket policy file is correctly placed";
     } else {
-      message = "error communicating with Web Socket server at " + url + " (SecurityError)";
+      message = "error communicating with Web Socket server at " + _url + " (SecurityError)";
     }
     onError(message);
   }
@@ -241,17 +210,14 @@ public class WebSocket extends EventDispatcher {
   private function onError(message:String):void {
 	trace("# WebSocket ERROR: "+message);
 	var state:int = readyState;
-	dispatchEvent(new Event(state == CONNECTING ? "close" : "error"));
     if (state == CLOSED) return;
     close();
-    notifyStateChange();
-    
+	dispatchEvent(new Event(state == CONNECTING ? "close" : "error"));
   }
 
   private function onSocketData(event:ProgressEvent):void {
     var pos:int = buffer.length;
     socket.readBytes(buffer, pos);
-	
 	
     for (; pos < buffer.length; ++pos) {
       if (headerState < 4) {
@@ -282,7 +248,6 @@ public class WebSocket extends EventDispatcher {
           removeBufferBefore(pos + 1);
           pos = -1;
           readyState = OPEN;
-          notifyStateChange();
           dispatchEvent(new Event("open"));
         }
       } else {
@@ -301,14 +266,13 @@ public class WebSocket extends EventDispatcher {
           removeBufferBefore(pos + 1);
           pos = -1;
           close();
-          notifyStateChange();
           dispatchEvent(new Event("close"));
         }
       }
     }
   }
 
-  public function readSocketData():Array {
+  public function read():Array {
     var q:Array = dataQueue;
     if (dataQueue.length > 0) {
       dataQueue = [];
@@ -373,10 +337,6 @@ public class WebSocket extends EventDispatcher {
     buffer.position = pos;
     buffer.readBytes(nextBuffer);
     buffer = nextBuffer;
-  }
-  
-  private function notifyStateChange():void {
-    dispatchEvent(new WebSocketStateEvent("stateChange", readyState, bufferedAmount));
   }
   
   private function initNoiseChars():void {

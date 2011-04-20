@@ -13,8 +13,8 @@
 			 * @copyright Copyright (c) 2010 CLEVR Ltd
 			 */
 			
-			import com.clevr.socket.SocketIOEvent;
-			import com.clevr.socket.SocketIo;
+			import com.zall.socketio.SocketIOEvent;
+			import com.zall.socketio.SocketIo;
 			
 			import mx.events.FlexEvent;
 			

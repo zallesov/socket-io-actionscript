@@ -1,18 +1,18 @@
 /**
  * Socket.IO Actionscript client
  * 
- * @author Matt Kane
- * @license The MIT license.
- * @copyright Copyright (c) 2010 CLEVR Ltd
+ * @author Alexander Zalesov
  */
 
-package com.clevr.socket {
+package com.zall.socketio {
 	import flash.events.Event;
 	
 	public class SocketIOEvent extends Event {
 		
 		public static const MESSAGE : String = "message";
 		public static const CONNECTED : String = "connected";
+		public static const CONNECT_FAILED : String = "connect_failed";
+		public static const ATTEMPT : String = "attempt";
 		public static const DISCONNECTED : String = "disconnected";
 		public static const RECONNECTING : String = "reconnecting";
 		public static const ERROR : String = "error";

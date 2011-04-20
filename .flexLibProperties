@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <flexLibProperties includeAllClasses="false" version="3">
   <includeClasses>
-    <classEntry path="com.clevr.socket.SocketIOEvent"/>
-    <classEntry path="com.clevr.socket.SocketIo"/>
-    <classEntry path="com.clevr.socket.WebSocket"/>
-    <classEntry path="com.gimite.WebSocketStateEvent"/>
+    <classEntry path="com.zall.socketio.SocketIOEvent"/>
+    <classEntry path="com.zall.socketio.SocketIo"/>
+    <classEntry path="com.zall.socketio.WebSocket"/>
     <classEntry path="com.gsolo.encryption.MD5"/>
+    <classEntry path="com.zall.socketio.HTTPSocket"/>
+    <classEntry path="com.zall.socketio.ISocketStreamer"/>
+    <classEntry path="com.zall.socketio.TransportFactory"/>
   </includeClasses>
   <includeResources/>
   <namespaceManifests/>

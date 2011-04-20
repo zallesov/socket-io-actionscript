@@ -1,12 +1,9 @@
 /**
  * Socket.IO Actionscript client
- * 
- * @author Matt Kane
- * @license The MIT license.
- * @copyright Copyright (c) 2010 CLEVR Ltd
+ * @author Alexander Zalesov
  */
 
-package com.clevr.socket
+package com.zall.socketio
 {	
 	import com.adobe.serialization.json.JSON;
 	
@@ -19,19 +16,22 @@ package com.clevr.socket
 	
 	import mx.utils.URLUtil;
 	
-	[Event(name="IoDataEventData", type="com.clevr.socket.SocketIOEvent")]
+	[Event(name="IoDataEventData", type="com.zall.socketio.SocketIOEvent")]
 	public class SocketIo extends EventDispatcher {
 		public var connected:Boolean = false;
 		public var connecting:Boolean = false;
 		public var host:String;
 		public var options:Object;
-		public var socket:WebSocket;
+		public var socket:ISocketStreamer;
 		public var sessionid:String;
 		private var frame:String = '~m~';
-		private var connectTimeout:*;	
 		private var doReconnect:Boolean = true;
+		private var connectTimeout:*;	
 		private var reconnectTimeout:*;
+		private var keepAliveTimeout:*;	
 		private var _queue:Array;
+		
+		private var attempt:Number = 0;
 		/**
 		 * @param host - host or url
 		 * @param options (optional)
@@ -39,7 +39,8 @@ package com.clevr.socket
 		 * cookies:Object values to insert into http Cookie header.
 		 * secure:Boolean true for using secure socket. default false
 		 * headers:Striing Aditional headers devided with "\r\n"
-		 * timeout:Number time in milliseconds to reconnect if no messeges were recieved during it. default 15000
+		 * keepalive_timeout:Number time in milliseconds to reconnect if no messeges were recieved during it. default 15000
+		 * connect_timeout:Number time in milliseconds to fail the connection
 		 */		
 		public function SocketIo(host:String, options:Object=null) {
 			super();
@@ -47,7 +48,8 @@ package com.clevr.socket
 				secure: false,
 				port:  80,
 				resource: 'socket.io',
-				timeout: 15000
+				keepalive_timeout: 15000,
+				connect_timeout:5000
 			}
 			this.host = host;
 			_queue = new Array();
@@ -55,35 +57,54 @@ package com.clevr.socket
 				this.options[p] = options[p];
 			}
 		}
-		
+		/**
+		 * Connects to socket server first with pure socket, then if fail with http tunel socket. 
+		 * 
+		 */		
 		public function connect():void {
 			if(connecting || connected) {
 				return;
 			}
-			resetConnectTimeOut()
+			resetConnectTimeOut();
+			if(keepAliveTimeout) clearTimeout(keepAliveTimeout); 
 			if(reconnectTimeout) clearTimeout(reconnectTimeout);
 			connecting = true;
 			
 			var cookiesStr:String = options["cookies"] ? URLUtil.objectToString(options["cookies"], "; ", true): "";
 			var headersStr:String = options["headers"] ? options["headers"] : "";
-			socket = new WebSocket(url, "",null,0, cookiesStr, headersStr);	
+			socket = TransportFactory.createSocket(attempt, host, options.port, options.resource, sessionid,cookiesStr, headersStr);
 			trace("# SocketIO connecting to "+url)
 			socket.addEventListener("message", onData);
-			
+			socket.addEventListener("open", onOpen);
 			socket.addEventListener("close", onDisconnect);
-			
 			socket.addEventListener("error", onError);
 			
 			socket.connect();
 		}
 		
+		public function get url():String{
+			return socket.url;
+		}
+		/**
+		 * Disconnect from socket server 
+		 * 
+		 */		
 		public function disconnect():void {
-			clearTimeout(reconnectTimeout);
+			if(reconnectTimeout) clearTimeout(reconnectTimeout);
+			if(keepAliveTimeout) clearTimeout(keepAliveTimeout);
+			if(connectTimeout) clearTimeout(connectTimeout);
+			reconnectTimeout = null;
+			keepAliveTimeout = null;
+			connectTimeout = null;
 			doReconnect = false;
-			if(socket) socket.close();
 			onDisconnect();
 		}
 		
+		/**
+		 * Encodes and sends the message 
+		 * @param message
+		 * 
+		 */		
 		public function send(message:*):void {
 			var encodedMessage:String = encode(message);
 			trace("# SocketIO sending message: "+encodedMessage);
@@ -109,30 +130,37 @@ package com.clevr.socket
 		}
 		
 		protected function onData(event:Event):void {
-			resetConnectTimeOut();
-			var bunch:Array = socket.readSocketData();
+			resetKeepAliveTimeOut();
+			var bunch:Array = socket.read();
 			for (var i:int = 0; i < bunch.length; i++) {
-				var msgs = decode(bunch[i]);
+				decode(bunch[i]);
 			}
+		}
+		
+		protected function onOpen(event:Event):void{
+			clearTimeout(connectTimeout);
+			connectTimeout = null;
+			resetKeepAliveTimeOut();
 		}
 		
 		protected function decode(data:String):void {
 			var messages:Array = [], number, n;
+			var orig:String = data;
 			do {
-				if (data.substr(0, 3) !== frame) return;
-				data = data.substr(3);
-				number = '', n = '';
+				if (data.substr(0, frame.length) !== frame) return;
+				data = data.substr(frame.length);
+				var numberStr:String = '', nChar:String = '', number:Number;
 				for (var i:int = 0, l:int = data.length; i < l; i++){
-					n = Number(data.substr(i, 1));
-					if (data.substr(i, 1) == n){
-						number += n;
+					nChar = data.substr(i, 1);
+					if (data.substr(i, frame.length) != frame){
+						numberStr += nChar;
 					} else {	
-						data = data.substr(number.length + frame.length);
-						number = Number(number);
+						data = data.substr(numberStr.length + frame.length);
+						number = Number(numberStr);
 						break;
 					} 
 				}
-				onMessage(data.substr(0, number));
+				onMessage(data.substr(0, Number(number)));
 				data = data.substr(number);
 			} while(data !== '');
 		}
@@ -140,13 +168,18 @@ package com.clevr.socket
 		protected function onMessage(message:String):void{
 			if (!this.sessionid){
 				sessionid = message;
+				socket.setSession(sessionid);
 				onConnect();
 			} else if (message.substr(0, 3) == '~h~'){
 				onHeartbeat(message);
 			} else if (message.substr(0, 3) == '~j~'){
-				var obj:* = JSON.decode(message.substr(3));
-				trace("# SocketIO recieve message: "+message);
-				dispatchEvent(new SocketIOEvent(SocketIOEvent.MESSAGE, obj));
+				try{
+					var obj:* = JSON.decode(message.substr(3));
+					trace("# SocketIO recieve message: "+message);
+					dispatchEvent(new SocketIOEvent(SocketIOEvent.MESSAGE, obj));
+				}catch(e:Error){
+					trace(message);
+				}
 			} else {
 				trace("# SocketIO recieve message: "+message);
 				dispatchEvent(new SocketIOEvent(SocketIOEvent.MESSAGE, message));
@@ -156,6 +189,8 @@ package com.clevr.socket
 		protected function onHeartbeat(heartbeat:String):void{
 			send(heartbeat);
 		}
+		
+		
 		
 		protected function write(message:String):void {
 			if(!connected || !socket) {
@@ -181,21 +216,10 @@ package com.clevr.socket
 			}
 		}
 
-		protected function get url():String{
-				return (options.secure ? 'wss' : 'ws') 
-				+ '://' + host 
-				+ ':' + options.port
-				+ '/' + options.resource
-				+ '/flashsocket'
-				+ (sessionid ? ('/' + sessionid) : '');
-		}
-		
 		protected function onError(message:String):void {
 			trace("# SocketIO Error: " + message);
 			dispatchEvent(new SocketIOEvent(SocketIOEvent.ERROR, {message:message}));
-			if(socket){
-				socket.close();
-			}
+
 			onDisconnect();
 		}
 		
@@ -218,23 +242,40 @@ package com.clevr.socket
 				socket.removeEventListener("close", onDisconnect);
 				socket.removeEventListener("message", onData);
 				socket.removeEventListener("error", onError);
+				socket.removeEventListener("open", onOpen);
 				socket.close();
 				socket = null;
 			}
 			
-			dispatchEvent(new SocketIOEvent(wasConnected&&doReconnect?SocketIOEvent.RECONNECTING:SocketIOEvent.DISCONNECTED));
-			
+			if(!wasConnected){
+				attempt++;
+				if(attempt%TransportFactory.transportNum==0){
+					trace("# SocketIO connect failed");
+					dispatchEvent(new SocketIOEvent(SocketIOEvent.CONNECT_FAILED));
+				}else{ 
+					trace("# SocketIO using another transport");
+					dispatchEvent(new SocketIOEvent(SocketIOEvent.ATTEMPT));
+				}
+			}
 			if(doReconnect){
 				trace("# SocketIO reconnecting");
+				dispatchEvent(new SocketIOEvent(SocketIOEvent.RECONNECTING));
 				reconnectTimeout = setTimeout(connect, Math.round(4000+1000*Math.random()));
 			}else{
 				trace("# SocketIO disconnected")
+				dispatchEvent(new SocketIOEvent(SocketIOEvent.DISCONNECTED));
 			}
+			
+		}
+		
+		protected function resetKeepAliveTimeOut():void{
+			if(keepAliveTimeout) clearTimeout(keepAliveTimeout);
+			keepAliveTimeout = setTimeout(onDisconnect, options["keepalive_timeout"]);
 		}
 		
 		protected function resetConnectTimeOut():void{
 			if(connectTimeout) clearTimeout(connectTimeout);
-			connectTimeout = setTimeout(onDisconnect, options["timeout"]);
+			connectTimeout = setTimeout(onDisconnect, options["connect_timeout"]);
 		}
 	}
 }
