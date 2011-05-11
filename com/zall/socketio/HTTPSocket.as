@@ -150,7 +150,7 @@ package com.zall.socketio
 		
 		private function onError(message:String):void {
 			trace("# HTTPSocket ERROR: "+message);
-			dispatchEvent(new Event("error"));
+			//dispatchEvent(new Event("error"));
 			close();
 		}
 		

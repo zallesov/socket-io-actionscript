@@ -238,6 +238,8 @@ package com.zall.socketio
 			sessionid = null;
 			_queue = [];
 			
+			clearTimeout(connectTimeout);
+			
 			if(socket){
 				socket.removeEventListener("close", onDisconnect);
 				socket.removeEventListener("message", onData);
