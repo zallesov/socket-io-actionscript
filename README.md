@@ -1,4 +1,4 @@
-socket.io Actionscript client
+socket.io Actionscript client (socket.io version 0.6)
 ============================
 
 This is fork from Matt Kane implementation that did not work for me. I ported javascript SockeytIO code to actionscript and it works fine now on yatv.ru.
